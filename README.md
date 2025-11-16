@@ -1,5 +1,3 @@
-# github-org-duplicator
-Github Organization Duplicator
 # GitHub Organization Duplicator
 
 A Python script to duplicate all repositories from one GitHub organization to another, preserving all branches, tags, commit history, and repository metadata.
