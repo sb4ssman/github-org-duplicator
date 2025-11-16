@@ -136,6 +136,35 @@ def get_repos_with_details(org):
 def compare_repos(source_org, dest_org, repo_name):
     """Compare two repos to see if they're identical duplicates."""
     try:
+        # Get default branch info from both repos
+        source_info = run_command([
+            'gh', 'api', f'/repos/{source_org}/{repo_name}',
+            '--jq', '{default_branch: .default_branch, size: .size}'
+        ], check=True)
+        
+        dest_info = run_command([
+            'gh', 'api', f'/repos/{dest_org}/{repo_name}',
+            '--jq', '{default_branch: .default_branch, size: .size}'
+        ], check=True)
+        
+        source_data = json.loads(source_info.stdout.strip())
+        dest_data = json.loads(dest_info.stdout.strip())
+        
+        # Check if default branches match
+        if source_data['default_branch'] != dest_data['default_branch']:
+            return False, "Default branches don't match"
+        
+        # Check if sizes are similar (within 1% tolerance for GitHub's calculation delays)
+        source_size = source_data['size']
+        dest_size = dest_data['size']
+        
+        if dest_size == 0 and source_size > 0:
+            return False, "Destination repo appears empty (0 KB)"
+        
+        size_diff_percent = abs(source_size - dest_size) / max(source_size, 1) * 100
+        if size_diff_percent > 1:
+            return False, f"Size mismatch (source: {source_size}KB, dest: {dest_size}KB)"
+        
         # Get branch info from both repos
         source_branches = run_command([
             'gh', 'api', f'/repos/{source_org}/{repo_name}/branches',
@@ -147,12 +176,12 @@ def compare_repos(source_org, dest_org, repo_name):
             '--jq', '.[].name'
         ], check=True)
         
-        source_branch_list = set(source_branches.stdout.strip().split('\n'))
-        dest_branch_list = set(dest_branches.stdout.strip().split('\n'))
+        source_branch_list = set(source_branches.stdout.strip().split('\n')) if source_branches.stdout.strip() else set()
+        dest_branch_list = set(dest_branches.stdout.strip().split('\n')) if dest_branches.stdout.strip() else set()
         
         # Compare branch names
         if source_branch_list != dest_branch_list:
-            return False, "Branch names don't match"
+            return False, f"Branch count mismatch (source: {len(source_branch_list)}, dest: {len(dest_branch_list)})"
         
         # For each branch, compare the HEAD commit SHA
         for branch in source_branch_list:
@@ -167,12 +196,53 @@ def compare_repos(source_org, dest_org, repo_name):
             ], check=True).stdout.strip()
             
             if source_sha != dest_sha:
-                return False, f"Branch '{branch}' has different commits"
+                return False, f"Branch '{branch}' has different HEAD commits"
         
         return True, "Repos are identical"
         
     except Exception as e:
         return False, f"Error comparing: {str(e)}"
+
+# def compare_repos(source_org, dest_org, repo_name):
+#     """Compare two repos to see if they're identical duplicates."""
+#     try:
+#         # Get branch info from both repos
+#         source_branches = run_command([
+#             'gh', 'api', f'/repos/{source_org}/{repo_name}/branches',
+#             '--jq', '.[].name'
+#         ], check=True)
+        
+#         dest_branches = run_command([
+#             'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches',
+#             '--jq', '.[].name'
+#         ], check=True)
+        
+#         source_branch_list = set(source_branches.stdout.strip().split('\n'))
+#         dest_branch_list = set(dest_branches.stdout.strip().split('\n'))
+        
+#         # Compare branch names
+#         if source_branch_list != dest_branch_list:
+#             return False, "Branch names don't match"
+        
+#         # For each branch, compare the HEAD commit SHA
+#         for branch in source_branch_list:
+#             source_sha = run_command([
+#                 'gh', 'api', f'/repos/{source_org}/{repo_name}/branches/{branch}',
+#                 '--jq', '.commit.sha'
+#             ], check=True).stdout.strip()
+            
+#             dest_sha = run_command([
+#                 'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches/{branch}',
+#                 '--jq', '.commit.sha'
+#             ], check=True).stdout.strip()
+            
+#             if source_sha != dest_sha:
+#                 return False, f"Branch '{branch}' has different commits"
+        
+#         return True, "Repos are identical"
+        
+#     except Exception as e:
+#         return False, f"Error comparing: {str(e)}"
 
 def format_size(kb):
     """Format size in KB to human readable format."""
@@ -266,6 +336,11 @@ def main():
     print(f"✓ {len(dest_repos)} repos found in {dest_org}")
     print()
 
+    # Initialize tracking files
+    completed_file = 'completed_repos.txt'
+    error_log = 'migration_errors.txt'
+    success_log = 'migration_log.txt'
+
     # Check for conflicts (case-insensitive)
     source_names = {repo['name'].lower(): repo['name'] for repo in source_repos}
     dest_names = {repo['name'].lower(): repo['name'] for repo in dest_repos}
@@ -358,11 +433,6 @@ def main():
         sys.exit(1)
     
     print()
-    
-    # Initialize tracking files
-    completed_file = 'completed_repos.txt'
-    error_log = 'migration_errors.txt'
-    success_log = 'migration_log.txt'
     
     # Load completed repos
     completed_repos = load_completed_repos(completed_file)
