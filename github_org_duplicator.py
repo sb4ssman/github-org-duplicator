@@ -552,8 +552,9 @@ def main():
         is_private = repo['isPrivate']
         description = repo.get('description', '') or ''
         uses_lfs = repo.get('uses_lfs', False)
+        repo_size = format_size(repo.get('diskUsage', 0))
         
-        print(f"[{idx}/{total_repos}] Processing: {repo_name}")
+        print(f"[{idx}/{total_repos}] Processing: {repo_name} [{repo_size}]")
         if uses_lfs:
             print(f"  ⚠ This repo uses Git LFS")
         
