@@ -168,17 +168,6 @@ def compare_repos(source_org, dest_org, repo_name):
         if source_data['default_branch'] != dest_data['default_branch']:
             return False, "Default branches don't match"
         
-        # Check if sizes are similar (within 1% tolerance for GitHub's calculation delays)
-        source_size = source_data['size']
-        dest_size = dest_data['size']
-        
-        if dest_size == 0 and source_size > 0:
-            return False, "Destination repo appears empty (0 KB)"
-        
-        size_diff_percent = abs(source_size - dest_size) / max(source_size, 1) * 100
-        if size_diff_percent > 1:
-            return False, f"Size mismatch (source: {source_size}KB, dest: {dest_size}KB)"
-        
         # Get branch info from both repos
         source_branches = run_command([
             'gh', 'api', f'/repos/{source_org}/{repo_name}/branches',
@@ -193,11 +182,16 @@ def compare_repos(source_org, dest_org, repo_name):
         source_branch_list = set(source_branches.stdout.strip().split('\n')) if source_branches.stdout.strip() else set()
         dest_branch_list = set(dest_branches.stdout.strip().split('\n')) if dest_branches.stdout.strip() else set()
         
+        # If dest has no branches at all, it's empty
+        if not dest_branch_list and source_branch_list:
+            return False, "Destination repo has no branches"
+        
         # Compare branch names
         if source_branch_list != dest_branch_list:
             return False, f"Branch count mismatch (source: {len(source_branch_list)}, dest: {len(dest_branch_list)})"
         
         # For each branch, compare the HEAD commit SHA
+        all_match = True
         for branch in source_branch_list:
             source_sha = run_command([
                 'gh', 'api', f'/repos/{source_org}/{repo_name}/branches/{branch}',
@@ -212,10 +206,82 @@ def compare_repos(source_org, dest_org, repo_name):
             if source_sha != dest_sha:
                 return False, f"Branch '{branch}' has different HEAD commits"
         
-        return True, "Repos are identical"
+        # If all branches match, repos are identical regardless of reported size
+        # (GitHub's size calculation can be delayed)
+        return True, "Repos are identical (all branches match)"
         
     except Exception as e:
         return False, f"Error comparing: {str(e)}"
+
+# def compare_repos(source_org, dest_org, repo_name):
+#     """Compare two repos to see if they're identical duplicates."""
+#     try:
+#         # Get default branch info from both repos
+#         source_info = run_command([
+#             'gh', 'api', f'/repos/{source_org}/{repo_name}',
+#             '--jq', '{default_branch: .default_branch, size: .size}'
+#         ], check=True)
+        
+#         dest_info = run_command([
+#             'gh', 'api', f'/repos/{dest_org}/{repo_name}',
+#             '--jq', '{default_branch: .default_branch, size: .size}'
+#         ], check=True)
+        
+#         source_data = json.loads(source_info.stdout.strip())
+#         dest_data = json.loads(dest_info.stdout.strip())
+        
+#         # Check if default branches match
+#         if source_data['default_branch'] != dest_data['default_branch']:
+#             return False, "Default branches don't match"
+        
+#         # Check if sizes are similar (within 1% tolerance for GitHub's calculation delays)
+#         source_size = source_data['size']
+#         dest_size = dest_data['size']
+        
+#         if dest_size == 0 and source_size > 0:
+#             return False, "Destination repo appears empty (0 KB)"
+        
+#         size_diff_percent = abs(source_size - dest_size) / max(source_size, 1) * 100
+#         if size_diff_percent > 1:
+#             return False, f"Size mismatch (source: {source_size}KB, dest: {dest_size}KB)"
+        
+#         # Get branch info from both repos
+#         source_branches = run_command([
+#             'gh', 'api', f'/repos/{source_org}/{repo_name}/branches',
+#             '--jq', '.[].name'
+#         ], check=True)
+        
+#         dest_branches = run_command([
+#             'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches',
+#             '--jq', '.[].name'
+#         ], check=True)
+        
+#         source_branch_list = set(source_branches.stdout.strip().split('\n')) if source_branches.stdout.strip() else set()
+#         dest_branch_list = set(dest_branches.stdout.strip().split('\n')) if dest_branches.stdout.strip() else set()
+        
+#         # Compare branch names
+#         if source_branch_list != dest_branch_list:
+#             return False, f"Branch count mismatch (source: {len(source_branch_list)}, dest: {len(dest_branch_list)})"
+        
+#         # For each branch, compare the HEAD commit SHA
+#         for branch in source_branch_list:
+#             source_sha = run_command([
+#                 'gh', 'api', f'/repos/{source_org}/{repo_name}/branches/{branch}',
+#                 '--jq', '.commit.sha'
+#             ], check=True).stdout.strip()
+            
+#             dest_sha = run_command([
+#                 'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches/{branch}',
+#                 '--jq', '.commit.sha'
+#             ], check=True).stdout.strip()
+            
+#             if source_sha != dest_sha:
+#                 return False, f"Branch '{branch}' has different HEAD commits"
+        
+#         return True, "Repos are identical"
+        
+#     except Exception as e:
+#         return False, f"Error comparing: {str(e)}"
 
 # def compare_repos(source_org, dest_org, repo_name):
 #     """Compare two repos to see if they're identical duplicates."""
@@ -537,17 +603,29 @@ def main():
             
             run_command(cmd, check=True)
             
-            # Step 3: Push to dest org
+            # Step 3: Push to dest org (excluding pull request refs)
             print(f"  → Pushing to {dest_org}...")
             push_url = f"https://github.com/{dest_org}/{repo_name}.git"
-            
+
             # Retry logic for push
             for attempt in range(max_retries):
                 try:
-                    run_command(
-                        ['git', '-C', repo_temp_path, 'push', '--mirror', push_url],
+                    # First, get list of all refs
+                    result = run_command(
+                        ['git', '-C', repo_temp_path, 'for-each-ref', '--format=%(refname)', 'refs/'],
                         check=True
                     )
+                    
+                    # Filter out pull request refs
+                    all_refs = result.stdout.strip().split('\n')
+                    good_refs = [ref for ref in all_refs if not ref.startswith('refs/pull/')]
+                    
+                    # Push only the good refs
+                    if good_refs:
+                        run_command(
+                            ['git', '-C', repo_temp_path, 'push', push_url] + good_refs,
+                            check=True
+                        )
                     break
                 except Exception as e:
                     if attempt < max_retries - 1:
@@ -555,6 +633,25 @@ def main():
                         time.sleep(5)
                     else:
                         raise
+
+            # # Step 3: Push to dest org
+            # print(f"  → Pushing to {dest_org}...")
+            # push_url = f"https://github.com/{dest_org}/{repo_name}.git"
+            
+            # # Retry logic for push
+            # for attempt in range(max_retries):
+            #     try:
+            #         run_command(
+            #             ['git', '-C', repo_temp_path, 'push', '--mirror', push_url],
+            #             check=True
+            #         )
+            #         break
+            #     except Exception as e:
+            #         if attempt < max_retries - 1:
+            #             print(f"  → Push attempt {attempt + 1} failed, retrying...")
+            #             time.sleep(5)
+            #         else:
+            #             raise
             
             # Step 4: Clean up temp directory
             print(f"  → Cleaning up...")
