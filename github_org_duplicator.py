@@ -30,8 +30,16 @@ def log_message(message, log_file):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] {message}"
     print(message)
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:  # <-- Added encoding='utf-8'
         f.write(log_entry + '\n')
+
+# def log_message(message, log_file):
+#     """Print to console and write to log file."""
+#     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#     log_entry = f"[{timestamp}] {message}"
+#     print(message)
+#     with open(log_file, 'a') as f:
+#         f.write(log_entry + '\n')
 
 def check_gh_installed():
     """Verify gh CLI is installed."""
