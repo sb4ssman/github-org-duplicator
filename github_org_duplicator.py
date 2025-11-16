@@ -19,11 +19,25 @@ def run_command(cmd, check=True, capture=True):
     result = subprocess.run(
         cmd,
         capture_output=capture,
-        text=True
+        text=True,
+        encoding='utf-8',  # ADD THIS
+        errors='replace',  # ADD THIS - replaces problematic chars with ?
+        check=False
     )
     if check and result.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{result.stderr.strip()}")
     return result
+
+# def run_command(cmd, check=True, capture=True):
+#     """Run a shell command and return result."""
+#     result = subprocess.run(
+#         cmd,
+#         capture_output=capture,
+#         text=True
+#     )
+#     if check and result.returncode != 0:
+#         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{result.stderr.strip()}")
+#     return result
 
 def log_message(message, log_file):
     """Print to console and write to log file."""
@@ -483,7 +497,17 @@ def main():
         try:
             # Step 1: Clone from source org
             print(f"  → Cloning from {source_org}...")
+
+            # Clean up any leftover temp directory first
+            if os.path.exists(repo_temp_path):
+                print(f"  → Cleaning up leftover temp directory...")
+                shutil.rmtree(repo_temp_path, ignore_errors=True)
+
             clone_url = f"https://github.com/{source_org}/{repo_name}.git"
+
+            # # Step 1: Clone from source org
+            # print(f"  → Cloning from {source_org}...")
+            # clone_url = f"https://github.com/{source_org}/{repo_name}.git"
             
             # Retry logic for clone
             max_retries = 3
