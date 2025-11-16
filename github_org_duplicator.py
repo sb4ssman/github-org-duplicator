@@ -133,6 +133,47 @@ def get_repos_with_details(org):
     
     return repos
 
+def compare_repos(source_org, dest_org, repo_name):
+    """Compare two repos to see if they're identical duplicates."""
+    try:
+        # Get branch info from both repos
+        source_branches = run_command([
+            'gh', 'api', f'/repos/{source_org}/{repo_name}/branches',
+            '--jq', '.[].name'
+        ], check=True)
+        
+        dest_branches = run_command([
+            'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches',
+            '--jq', '.[].name'
+        ], check=True)
+        
+        source_branch_list = set(source_branches.stdout.strip().split('\n'))
+        dest_branch_list = set(dest_branches.stdout.strip().split('\n'))
+        
+        # Compare branch names
+        if source_branch_list != dest_branch_list:
+            return False, "Branch names don't match"
+        
+        # For each branch, compare the HEAD commit SHA
+        for branch in source_branch_list:
+            source_sha = run_command([
+                'gh', 'api', f'/repos/{source_org}/{repo_name}/branches/{branch}',
+                '--jq', '.commit.sha'
+            ], check=True).stdout.strip()
+            
+            dest_sha = run_command([
+                'gh', 'api', f'/repos/{dest_org}/{repo_name}/branches/{branch}',
+                '--jq', '.commit.sha'
+            ], check=True).stdout.strip()
+            
+            if source_sha != dest_sha:
+                return False, f"Branch '{branch}' has different commits"
+        
+        return True, "Repos are identical"
+        
+    except Exception as e:
+        return False, f"Error comparing: {str(e)}"
+
 def format_size(kb):
     """Format size in KB to human readable format."""
     if kb < 1024:
@@ -224,22 +265,72 @@ def main():
     print(f"✓ {len(source_repos)} repos found in {source_org}")
     print(f"✓ {len(dest_repos)} repos found in {dest_org}")
     print()
-    
+
     # Check for conflicts (case-insensitive)
     source_names = {repo['name'].lower(): repo['name'] for repo in source_repos}
     dest_names = {repo['name'].lower(): repo['name'] for repo in dest_repos}
     conflicts = set(source_names.keys()) & set(dest_names.keys())
-    
+
     if conflicts:
-        print("ERROR: Conflicting repository names found:")
-        for name_lower in sorted(conflicts):
-            print(f"  - {source_names[name_lower]}")
         print()
-        print("This tool is intended ONLY to copy one whole github org")
-        print("into one raw empty org, and it is not built to deal with conflicts.")
-        sys.exit(1)
+        print("=" * 60)
+        print("Matching repository names found. Verifying if duplicates...")
+        print("=" * 60)
+        
+        actual_conflicts = []
+        verified_duplicates = []
+        
+        for name_lower in sorted(conflicts):
+            repo_name = source_names[name_lower]
+            print(f"Checking: {repo_name}...", end=' ')
+            
+            is_identical, reason = compare_repos(source_org, dest_org, repo_name)
+            
+            if is_identical:
+                print(f"✓ Verified duplicate")
+                verified_duplicates.append(repo_name)
+            else:
+                print(f"✗ Different ({reason})")
+                actual_conflicts.append(repo_name)
+        
+        print()
+        
+        if actual_conflicts:
+            print("ERROR: Non-duplicate repositories with matching names found:")
+            for name in actual_conflicts:
+                print(f"  - {name}")
+            print()
+            print("This tool is intended ONLY to copy one whole github org")
+            print("into one raw empty org, and it is not built to deal with conflicts.")
+            sys.exit(1)
+        
+        if verified_duplicates:
+            print(f"✓ All {len(verified_duplicates)} matching repos are verified duplicates")
+            print("These will be skipped during migration.")
+            # Add verified duplicates to completed list
+            for repo_name in verified_duplicates:
+                if repo_name not in load_completed_repos(completed_file):
+                    with open(completed_file, 'a') as f:
+                        f.write(f"{repo_name}\n")
+            print()
+    else:
+        print("✓ No conflicts!")
+            
+    # # Check for conflicts (case-insensitive)
+    # source_names = {repo['name'].lower(): repo['name'] for repo in source_repos}
+    # dest_names = {repo['name'].lower(): repo['name'] for repo in dest_repos}
+    # conflicts = set(source_names.keys()) & set(dest_names.keys())
     
-    print("✓ No conflicts!")
+    # if conflicts:
+    #     print("ERROR: Conflicting repository names found:")
+    #     for name_lower in sorted(conflicts):
+    #         print(f"  - {source_names[name_lower]}")
+    #     print()
+    #     print("This tool is intended ONLY to copy one whole github org")
+    #     print("into one raw empty org, and it is not built to deal with conflicts.")
+    #     sys.exit(1)
+    
+    # print("✓ No conflicts!")
     
     # Display detailed tables
     display_repo_table(source_repos, source_org)
