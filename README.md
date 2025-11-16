@@ -80,7 +80,7 @@ gh repo list DEST-ORG --limit 1
 
 1. **Run the script:**
 ```bash
-   python git-org-duplicator.py
+   python github-org-duplicator.py
 ```
 
 2. **Follow the prompts:**
