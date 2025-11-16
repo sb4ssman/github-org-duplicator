@@ -107,13 +107,21 @@ def get_repos_with_details(org):
         sys.exit(1)
     
     repos = json.loads(result.stdout)
-    
+
     # Check each repo for LFS
     print(f"Checking {len(repos)} repos for Git LFS usage...")
     for idx, repo in enumerate(repos, 1):
-        print(f"  Checking {idx}/{len(repos)}: {repo['name']}", end='\r')
+        # Clear line and print progress
+        print(f"\r{' ' * 80}\r  Checking {idx}/{len(repos)}: {repo['name']}", end='', flush=True)
         repo['uses_lfs'] = check_repo_for_lfs(org, repo['name'])
     print()  # New line after progress
+
+    # # Check each repo for LFS
+    # print(f"Checking {len(repos)} repos for Git LFS usage...")
+    # for idx, repo in enumerate(repos, 1):
+    #     print(f"  Checking {idx}/{len(repos)}: {repo['name']}", end='\r')
+    #     repo['uses_lfs'] = check_repo_for_lfs(org, repo['name'])
+    # print()  # New line after progress
     
     return repos
 
